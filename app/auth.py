@@ -30,7 +30,7 @@ if not PIN_MECANICO or not PIN_GERENCIA:
         "PIN_MECANICO y PIN_GERENCIA deben estar definidos en .env"
     )
 
-TOKEN_TTL_SECONDS = 15 * 60
+TOKEN_TTL_SECONDS = 10 * 60 * 60  # 10 horas (jornada laboral); el auto-logout por inactividad es la seguridad real
 MAX_ATTEMPTS = 3
 LOCKOUT_SECONDS = 30
 

@@ -207,22 +207,44 @@ async def crear_cliente(data: ClienteCreate, db: Session = Depends(get_db)):
 
 
 
-@app.get("/clientes/{cliente_id}/citas", response_model=list[CitaOut])
+@app.get("/clientes/{cliente_id}/citas")
 async def listar_citas_cliente(cliente_id: int, db: Session = Depends(get_db)):
-    """Lista citas activas del cliente, ordenadas por fecha_hora ascendente.
-    Excluye canceladas y completadas (solo retorna lo accionable para el cliente)."""
+    """Lista TODAS las citas del cliente (para separar Próximas/Historial en el frontend),
+    enriquecidas con el nombre del servicio. Antes de listar, marca como no_asistio
+    cualquier cita vencida (trazabilidad). Ordena por fecha_hora descendente."""
     cliente = db.query(Cliente).filter(Cliente.id == cliente_id).first()
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
+    marcar_vencidas(db)
+
     citas = (
         db.query(Cita)
+        .options(joinedload(Cita.servicio), joinedload(Cita.moto))
         .filter(Cita.cliente_id == cliente_id)
-        .filter(Cita.estado.in_(["pendiente", "confirmada", "en_proceso"]))
-        .order_by(Cita.fecha_hora.asc())
+        .order_by(Cita.fecha_hora.desc())
         .all()
     )
-    return citas
+
+    return [
+        {
+            "id": c.id,
+            "turno": f"T-{c.id:03d}",
+            "fecha_hora": c.fecha_hora.isoformat(),
+            "estado": c.estado,
+            "notas": c.notas,
+            "servicio": {
+                "id": c.servicio.id,
+                "nombre": c.servicio.nombre,
+            },
+            "moto": {
+                "id": c.moto.id,
+                "placa": c.moto.placa,
+                "modelo": c.moto.modelo,
+            },
+        }
+        for c in citas
+    ]
 
 
 
@@ -336,6 +358,8 @@ async def listar_citas_del_dia(fecha: str, db: Session = Depends(get_db)):
     inicio = fecha_dt.replace(hour=0, minute=0, second=0)
     fin = fecha_dt.replace(hour=23, minute=59, second=59)
 
+    marcar_vencidas(db)
+
     citas = (
         db.query(Cita)
         .options(joinedload(Cita.cliente), joinedload(Cita.moto), joinedload(Cita.servicio))
@@ -377,12 +401,36 @@ async def listar_citas_del_dia(fecha: str, db: Session = Depends(get_db)):
 
 # Transiciones válidas de estado
 VALID_TRANSITIONS = {
-    "pendiente": {"confirmada", "en_proceso", "cancelada"},
-    "confirmada": {"en_proceso", "cancelada"},
+    "pendiente": {"confirmada", "en_proceso", "cancelada", "no_asistio"},
+    "confirmada": {"en_proceso", "cancelada", "no_asistio"},
     "en_proceso": {"completada"},
     "completada": set(),
     "cancelada": set(),
+    # no_asistio no es terminal: el mecánico puede corregir si el cliente sí vino
+    "no_asistio": {"en_proceso", "completada"},
 }
+
+# Estados que "liberan" el slot y cuentan como activos/futuros
+ESTADOS_ACTIVOS = ("pendiente", "confirmada", "en_proceso")
+
+
+def marcar_vencidas(db: Session) -> None:
+    """Actualización perezosa: cita pendiente/confirmada cuya fecha_hora ya pasó
+    se persiste como no_asistio. Se llama al consultar citas. Evita un cron
+    en un appliance de un solo equipo — el cálculo y la BD convergen al leer."""
+    from datetime import datetime as _dt
+    ahora = _dt.now()
+    vencidas = (
+        db.query(Cita)
+        .filter(Cita.fecha_hora < ahora)
+        .filter(Cita.estado.in_(["pendiente", "confirmada"]))
+        .all()
+    )
+    if vencidas:
+        for c in vencidas:
+            c.estado = "no_asistio"
+            logger.info(f"Cita vencida marcada no_asistio: id={c.id} fecha={c.fecha_hora.isoformat()}")
+        db.commit()
 
 
 @app.patch("/citas/{cita_id}/estado", response_model=CitaOut)
