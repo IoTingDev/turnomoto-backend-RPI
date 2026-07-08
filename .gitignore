@@ -1,0 +1,39 @@
+# --- Secretos y configuración local (NUNCA subir) ---
+.env
+.env.*
+!.env.example
+
+# --- Base de datos con datos reales de clientes (NUNCA subir) ---
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# --- Entorno virtual de Python ---
+turnomoto-env/
+venv/
+.venv/
+
+# --- Cachés de Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Backups locales ---
+*.bak
+*.bak2
+.bak_indicators/
+
+# --- Sistema / editor ---
+.DS_Store
+*.log
+.vscode/
+.idea/
+
+# --- Artefactos raros vistos en la carpeta ---
+.lgd-nfy0
