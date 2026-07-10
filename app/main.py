@@ -25,6 +25,7 @@ from .websocket_manager import manager, taller_manager
 from .nfc.reader import nfc_service
 from .hardware.indicators import indicators
 from .auth import router as auth_router, require_role
+from .routers.gerencia import router as gerencia_router
 from .models import Cliente, Servicio, Cita, Moto, NfcTag
 from .schemas import ClienteOut, ServicioOut, CitaOut, CitaCreate, ClienteCreate, ClienteUpdate, MotoUpdate, MotoOut
 # ----- Logging -----
@@ -82,6 +83,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(gerencia_router)
 
 
 # ===== Endpoints REST =====
