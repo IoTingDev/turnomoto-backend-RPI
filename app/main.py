@@ -26,7 +26,7 @@ from .nfc.reader import nfc_service
 from .hardware.indicators import indicators
 from .auth import router as auth_router, require_role
 from .routers.gerencia import router as gerencia_router
-from .models import Cliente, Servicio, Cita, Moto, NfcTag
+from .models import Cliente, Servicio, Cita, Moto, NfcTag, Calificacion
 from .schemas import ClienteOut, ServicioOut, CitaOut, CitaCreate, ClienteCreate, ClienteUpdate, MotoUpdate, MotoOut
 # ----- Logging -----
 logging.basicConfig(
@@ -227,6 +227,11 @@ async def listar_citas_cliente(cliente_id: int, db: Session = Depends(get_db)):
         .order_by(Cita.fecha_hora.desc())
         .all()
     )
+    ids = [c.id for c in citas]
+    califs = {}
+    if ids:
+        for cal in db.query(Calificacion).filter(Calificacion.cita_id.in_(ids)).all():
+            califs[cal.cita_id] = {"estrellas": cal.estrellas, "comentario": cal.comentario}
 
     return [
         {
@@ -244,6 +249,7 @@ async def listar_citas_cliente(cliente_id: int, db: Session = Depends(get_db)):
                 "placa": c.moto.placa,
                 "modelo": c.moto.modelo,
             },
+            "calificacion": califs.get(c.id),
         }
         for c in citas
     ]
@@ -478,6 +484,38 @@ async def actualizar_estado_cita(
 
 
 # ===== WebSocket para eventos NFC en tiempo real =====
+
+@app.post("/calificaciones", status_code=201)
+async def crear_calificacion(payload: dict, db: Session = Depends(get_db)):
+    """Registra la calificación CSAT de una cita completada.
+    Reglas: la cita debe existir y estar 'completada'; no puede estar ya calificada
+    (unicidad = calificación fija/solo-lectura). estrellas 1..5, comentario opcional."""
+    cita_id = payload.get("cita_id")
+    estrellas = payload.get("estrellas")
+    comentario = (payload.get("comentario") or "").strip() or None
+
+    if not isinstance(cita_id, int):
+        raise HTTPException(status_code=400, detail="cita_id inválido")
+    if not isinstance(estrellas, int) or not (1 <= estrellas <= 5):
+        raise HTTPException(status_code=400, detail="estrellas debe ser un entero entre 1 y 5")
+
+    cita = db.query(Cita).filter(Cita.id == cita_id).first()
+    if not cita:
+        raise HTTPException(status_code=404, detail="Cita no encontrada")
+    if cita.estado != "completada":
+        raise HTTPException(status_code=409, detail="Solo se pueden calificar citas completadas")
+
+    existe = db.query(Calificacion).filter(Calificacion.cita_id == cita_id).first()
+    if existe:
+        raise HTTPException(status_code=409, detail="Esta cita ya fue calificada")
+
+    cal = Calificacion(cita_id=cita_id, estrellas=estrellas, comentario=comentario)
+    db.add(cal)
+    db.commit()
+    db.refresh(cal)
+    logger.info(f"Calificación registrada: cita={cita_id} estrellas={estrellas}")
+    return {"id": cal.id, "cita_id": cal.cita_id, "estrellas": cal.estrellas, "comentario": cal.comentario}
+
 
 @app.websocket("/ws/nfc")
 async def websocket_nfc(websocket: WebSocket):

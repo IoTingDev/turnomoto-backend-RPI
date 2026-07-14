@@ -115,3 +115,16 @@ class LecturaNfc(Base):
     )
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
     resultado: Mapped[str] = mapped_column(String(30))
+
+class Calificacion(Base):
+    """Calificación CSAT de una cita completada. Una cita se califica una sola vez
+    (cita_id único). Fija: una vez enviada queda en solo lectura."""
+    __tablename__ = "calificaciones"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cita_id: Mapped[int] = mapped_column(ForeignKey("citas.id"), unique=True, nullable=False, index=True)
+    estrellas: Mapped[int] = mapped_column(Integer, nullable=False)  # 1..5
+    comentario: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fecha: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    cita: Mapped["Cita"] = relationship()

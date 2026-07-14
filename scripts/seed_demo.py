@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.database import SessionLocal
-from app.models import Cliente, Moto, Servicio, Cita
+from app.models import Cliente, Moto, Servicio, Cita, Calificacion
 
 random.seed(42)
 HOY = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -59,13 +59,14 @@ def gen_doc(usados):
 
 
 def limpiar(db):
+    n_cal = db.query(Calificacion).delete()
     n_citas = db.query(Cita).delete()
     demo = db.query(Cliente).filter(Cliente.email.like("%@demo.local")).all()
     n_cli = len(demo)
     for c in demo:
         db.delete(c)  # cascade: motos + nfc_tags
     db.commit()
-    print(f"  Limpieza: {n_citas} citas borradas, {n_cli} clientes demo eliminados")
+    print(f"  Limpieza: {n_cal} calificaciones, {n_citas} citas borradas, {n_cli} clientes demo eliminados")
 
 
 def sembrar(db):
@@ -135,6 +136,31 @@ def sembrar(db):
     print(f"  Sembradas {total} citas · {len(demo_clientes)} clientes demo · {len(protegidos)} clientes NFC con historial")
 
 
+def sembrar_calificaciones(db):
+    pos = ["Excelente atencion, muy rapidos", "Muy buen servicio, quede satisfecho",
+           "Puntuales y profesionales", "Me explicaron todo con claridad",
+           "Volvere sin duda", "Trato amable y la moto lista a tiempo"]
+    neu = ["Todo bien, aunque demoro un poco", "Servicio correcto", "Cumplieron, sin mas"]
+    neg = ["Demoraron mas de lo prometido", "Espere demasiado por mi moto",
+           "Falto comunicacion sobre el avance", "La atencion fue algo lenta"]
+    completadas = db.query(Cita).filter(Cita.estado == "completada").all()
+    n = 0
+    for c in completadas:
+        if random.random() > 0.68:
+            continue
+        estrellas = random.choices([5, 4, 3, 2, 1], weights=[45, 30, 15, 7, 3])[0]
+        comentario = None
+        if random.random() < 0.45:
+            comentario = random.choice(pos if estrellas >= 4 else neu if estrellas == 3 else neg)
+        fecha = c.fecha_hora + timedelta(hours=random.randint(1, 30))
+        db.add(Calificacion(cita_id=c.id, estrellas=estrellas, comentario=comentario, fecha=fecha))
+        n += 1
+    db.commit()
+    cals = db.query(Calificacion).all()
+    prom = round(sum(x.estrellas for x in cals) / len(cals), 2) if cals else 0
+    print(f"  Sembradas {n} calificaciones - promedio {prom} estrellas")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--clean", action="store_true", help="solo limpiar, sin sembrar")
@@ -145,6 +171,7 @@ def main():
         limpiar(db)
         if not args.clean:
             sembrar(db)
+            sembrar_calificaciones(db)
         print("\n═══ Verificación: resumen resultante (mes actual) ═══")
         from app.routers.gerencia import construir_resumen
         import json

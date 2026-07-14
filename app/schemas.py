@@ -109,3 +109,16 @@ class NfcEventOut(BaseModel):
     uid: str
     cliente: ClienteOut | None = None
     lectura_id: int
+
+class CalificacionCreate(BaseModel):
+    cita_id: int
+    estrellas: int
+    comentario: str | None = None
+
+
+class CalificacionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    cita_id: int
+    estrellas: int
+    comentario: str | None = None

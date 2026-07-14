@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Cita, Cliente, Servicio
+from ..models import Cita, Cliente, Servicio, Calificacion
 from ..auth import require_role
 
 router = APIRouter(prefix="/gerencia", tags=["gerencia"])
@@ -48,6 +48,41 @@ def _ausentismo(c):
     comp, na = c.get("completada", 0), c.get("no_asistio", 0)
     base = comp + na
     return round(na / base * 100) if base else None
+
+
+def _satisfaccion(db, d0, d1):
+    """Promedio de estrellas (0..5) y conteo, uniendo por fecha_hora de la cita."""
+    row = db.execute(
+        select(func.avg(Calificacion.estrellas), func.count(Calificacion.id))
+        .join(Cita, Cita.id == Calificacion.cita_id)
+        .where(Cita.fecha_hora >= d0, Cita.fecha_hora <= d1)
+    ).first()
+    prom, n = row if row else (None, 0)
+    return (round(float(prom), 2) if prom is not None else None, n or 0)
+
+
+def _tendencia_satisfaccion(db, d0, d1):
+    """Promedio de estrellas por semana ISO dentro del periodo."""
+    rows = db.execute(
+        select(func.strftime("%Y-%W", Cita.fecha_hora), func.avg(Calificacion.estrellas))
+        .join(Cita, Cita.id == Calificacion.cita_id)
+        .where(Cita.fecha_hora >= d0, Cita.fecha_hora <= d1)
+        .group_by(func.strftime("%Y-%W", Cita.fecha_hora))
+        .order_by(func.strftime("%Y-%W", Cita.fecha_hora))
+    ).all()
+    return [{"semana": w, "promedio": round(float(a), 2)} for w, a in rows if a is not None]
+
+
+def _comentarios_recientes(db, d0, d1, limit=4):
+    rows = db.execute(
+        select(Calificacion.estrellas, Calificacion.comentario, Cita.fecha_hora, Servicio.nombre)
+        .join(Cita, Cita.id == Calificacion.cita_id)
+        .join(Servicio, Servicio.id == Cita.servicio_id)
+        .where(Cita.fecha_hora >= d0, Cita.fecha_hora <= d1, Calificacion.comentario.isnot(None))
+        .order_by(Cita.fecha_hora.desc())
+        .limit(limit)
+    ).all()
+    return [{"estrellas": e, "comentario": c, "servicio": sv} for e, c, fh, sv in rows]
 
 
 def construir_resumen(db: Session, desde: datetime, hasta: datetime) -> dict:
@@ -106,6 +141,10 @@ def construir_resumen(db: Session, desde: datetime, hasta: datetime) -> dict:
         .limit(6)
     ).all()
 
+    sat_cur, sat_n = _satisfaccion(db, desde, hasta)
+    sat_prev, _ = _satisfaccion(db, desde_prev, hasta_prev)
+    sat_delta = round(sat_cur - sat_prev, 2) if (sat_cur is not None and sat_prev is not None) else None
+
     return {
         "periodo": {"desde": desde.isoformat(), "hasta": hasta.isoformat(), "dias": dias},
         "kpis": {
@@ -113,10 +152,13 @@ def construir_resumen(db: Session, desde: datetime, hasta: datetime) -> dict:
             "cumplimiento_pct": {"valor": cump_cur, "delta_pts": d_pts(cump_cur, cump_prev)},
             "ausentismo_pct": {"valor": aus_cur, "delta_pts": d_pts(aus_cur, aus_prev)},
             "clientes": {"total": total_clientes, "nuevos": nuevos, "recurrentes": recurrentes},
+            "satisfaccion": {"valor": sat_cur, "delta": sat_delta, "n": sat_n},
         },
         "citas_por_dia": list(por_dia.values()),
         "estados": {e: cur.get(e, 0) for e in ESTADOS_TODOS if cur.get(e, 0)},
         "top_servicios": [{"nombre": nombre, "total": n} for nombre, n in top],
+        "satisfaccion_tendencia": _tendencia_satisfaccion(db, desde, hasta),
+        "comentarios_recientes": _comentarios_recientes(db, desde, hasta),
     }
 
 
