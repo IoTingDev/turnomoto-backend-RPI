@@ -27,6 +27,9 @@ from .hardware.indicators import indicators
 from .auth import router as auth_router, require_role
 from .routers.gerencia import router as gerencia_router
 from .models import Cliente, Servicio, Cita, Moto, NfcTag, Calificacion
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pathlib import Path as _Path
 from .schemas import ClienteOut, ServicioOut, CitaOut, CitaCreate, ClienteCreate, ClienteUpdate, MotoUpdate, MotoOut
 # ----- Logging -----
 logging.basicConfig(
@@ -88,9 +91,9 @@ app.include_router(gerencia_router)
 
 # ===== Endpoints REST =====
 
-@app.get("/")
+@app.get("/api")
 async def root():
-    """Información básica del servicio."""
+    """Información básica del servicio (movido de / a /api: la raíz ahora sirve el kiosko SPA)."""
     return {
         "service": "TurnoMoto API",
         "version": "0.1.0",
@@ -563,3 +566,21 @@ async def websocket_taller(websocket: WebSocket):
     except Exception as e:
         logger.warning(f"WebSocket taller error: {e}")
         taller_manager.disconnect(websocket)
+
+
+# ===== Servir el frontend SPA (Fase 6) =====
+# Registrado al final: las rutas de API y WebSocket declaradas arriba tienen prioridad.
+_STATIC_DIR = _Path(__file__).resolve().parent.parent / "static"
+
+if _STATIC_DIR.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(_STATIC_DIR / "assets")), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def servir_spa(full_path: str):
+        """Catch-all del SPA: devuelve archivos estáticos si existen, o el shell HTML
+        para que el router del cliente maneje la ruta (/, /dashboard, /mis-citas, etc.)."""
+        candidato = (_STATIC_DIR / full_path).resolve()
+        # Seguridad: no permitir salir de static/
+        if _STATIC_DIR in candidato.parents and candidato.is_file():
+            return FileResponse(str(candidato))
+        return FileResponse(str(_STATIC_DIR / "_shell.html"))
